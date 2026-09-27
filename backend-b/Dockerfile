@@ -1,5 +1,5 @@
 # Etapa 1: compilar el jar con Maven + Java 21
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3-eclipse-temurin-24 AS build
 
 WORKDIR /app
 
