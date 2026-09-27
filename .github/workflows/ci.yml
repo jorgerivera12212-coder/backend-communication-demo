@@ -1,0 +1,64 @@
+# CI: tests de ambos backends y validación de los Dockerfiles. No publica imágenes.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-tests:
+    name: Backend A (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-a
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend-a/requirements.txt
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ejecutar tests
+        run: pytest
+
+  java-tests:
+    name: Backend B (Java)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-b
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: backend-b/pom.xml
+
+      - name: Ejecutar tests
+        run: mvn --batch-mode verify
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs:
+      - python-tests
+      - java-tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Construir backend-a
+        run: docker build -t backend-a:test ./backend-a
+
+      - name: Construir backend-b
+        run: docker build -t backend-b:test ./backend-b

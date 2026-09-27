@@ -148,8 +148,8 @@ DEPLOY_ENV=staging docker compose up -d --build
 ## Despliegue en staging y prod (`compose.deploy.yml`)
 
 `compose.deploy.yml` no tiene `build:`: usa `image:` con las imágenes indicadas en
-`BACKEND_A_IMAGE` y `BACKEND_B_IMAGE`, así que el servidor no compila código. **Se usará
-cuando las imágenes estén publicadas en un registro**; por ahora no hay publicación ni CI/CD.
+`BACKEND_A_IMAGE` y `BACKEND_B_IMAGE`, así que el servidor no compila código. Las imágenes las publica en
+Docker Hub el workflow de release (ver [CI/CD](#cicd)); el despliegue sigue siendo manual.
 
 ### Definir las imágenes
 
@@ -345,10 +345,46 @@ cd backend-b
 docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-21 mvn -B test
 ```
 
+## CI/CD
+
+Dos workflows de GitHub Actions en `.github/workflows/`:
+
+- **`ci.yml`**: se ejecuta en cada push a `main` y en cada pull request hacia `main`.
+  Corre los tests de Backend A (`pytest`) y de Backend B (`mvn --batch-mode verify`) en
+  paralelo; si ambos pasan, construye las dos imágenes Docker solo para validar los
+  `Dockerfile`. No publica nada.
+- **`release.yml`**: se ejecuta solo al hacer push de un tag de Git que empiece por `v`
+  (`v1.0.0`, `v1.1.0`...). Construye ambas imágenes y las publica en Docker Hub.
+
+Secrets necesarios (GitHub → Settings → Secrets and variables → Actions):
+
+| Secret | Valor |
+|---|---|
+| `DOCKERHUB_USERNAME` | Usuario de Docker Hub |
+| `DOCKERHUB_TOKEN` | Access token de Docker Hub (Account settings → Personal access tokens), con permiso de escritura |
+
+Publicar una nueva versión:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Esto publica automáticamente:
+
+```text
+<DOCKERHUB_USERNAME>/backend-a:v1.0.0   y   <DOCKERHUB_USERNAME>/backend-a:latest
+<DOCKERHUB_USERNAME>/backend-b:v1.0.0   y   <DOCKERHUB_USERNAME>/backend-b:latest
+```
+
+Para desplegar esa versión con `compose.deploy.yml`, usa el tag fijo (no `latest`), p. ej.
+`BACKEND_A_IMAGE=<DOCKERHUB_USERNAME>/backend-a:v1.0.0`.
+
 ## Estructura
 
 ```text
 .
+├── .github/workflows/      # ci.yml (tests + build) y release.yml (Docker Hub)
 ├── backend-a/              # Python + FastAPI
 │   ├── app/main.py
 │   ├── app/__main__.py     # python -m app: arranca Uvicorn en SERVER_PORT
