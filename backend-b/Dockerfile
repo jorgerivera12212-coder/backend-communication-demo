@@ -13,7 +13,7 @@ RUN mvn -B clean package -DskipTests
 
 
 # Etapa 2: solo el runtime de Java 21, sin Maven
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:24-jre
 
 # curl para el HEALTHCHECK (se instala explícitamente en vez de depender de la imagen base)
 RUN apt-get update \
