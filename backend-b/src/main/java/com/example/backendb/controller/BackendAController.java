@@ -54,6 +54,15 @@ public class BackendAController {
                 .retrieve()
                 .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
+            // 200 sin cuerpo: body() devuelve null (y Map.of no admite nulos)
+            if (backendAHealth == null) {
+                log.error("Error communicating with backend-a: empty response body");
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Error communicating with backend-a"
+                );
+            }
+
             return Map.of(
                 "message", "Status retrieved from backend-a",
                 "backendA", backendAHealth

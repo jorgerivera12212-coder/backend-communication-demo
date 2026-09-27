@@ -129,7 +129,7 @@ curl http://localhost:8080/backend-a-status
 |---|---|---|---|
 | `GET` | `/health` | `200` `{"status": "ok", "service": "backend-b"}` | — |
 | `GET` | `/user` | `200` `{"id": 1, "name": "John Doe", "email": "john@example.com"}` | — |
-| `GET` | `/backend-a-status` | `200` (ver abajo) | `502` si backend-a no responde o devuelve error |
+| `GET` | `/backend-a-status` | `200` (ver abajo) | `502` si backend-a no responde, devuelve error o un cuerpo vacío o que no es JSON |
 
 Ejemplo de `GET /backend-a-status` con backend-a disponible:
 
@@ -200,7 +200,22 @@ curl http://localhost:8000/profile          # backend-a → backend-b
 
 Solo backend-a tiene `depends_on` (Compose no admite dependencias circulares), y `depends_on`
 no espera a que el otro servicio esté listo. Si alguno de los endpoints que cruzan servicios
-devuelve `502` justo después de arrancar, espera unos segundos y vuelve a intentarlo.
+devuelve `502` justo después de arrancar, espera unos segundos y vuelve a intentarlo. Con
+imágenes que incluyen healthcheck (ver abajo) puedes usar
+`depends_on: backend-b: condition: service_healthy` en backend-a y `docker compose up -d --wait`.
+
+## Healthcheck y usuario
+
+A partir de la primera versión publicada después de `v2.0.0`:
+
+- La imagen incluye `HEALTHCHECK`: consulta su propio `GET /health` cada 10 s con `curl`
+  (instalado en la imagen), con 30 s de margen para que arranque Spring Boot. No llama a
+  backend-a, así que el estado `healthy` no depende del otro servicio. Ver el estado:
+  `docker ps` o `docker inspect --format '{{json .State.Health}}' backend-b`.
+- El proceso corre como el usuario sin privilegios `app` (uid 10001), no como root.
+- Si backend-a responde `200` sin cuerpo, `/backend-a-status` devuelve `502` en lugar de `500`.
+
+`v1.0.0` y `v2.0.0` no tienen healthcheck y corren como root.
 
 ## Código fuente
 

@@ -33,8 +33,10 @@ services:
         limits:
           memory: 512M
           cpus: "0.5"
+    # Healthcheck definido en backend-b/Dockerfile (solo su propio /health).
     # Sin depends_on hacia backend-a: Compose no admite dependencias circulares.
-    # Si backend-a aún no ha arrancado, /backend-a-status devuelve 502 hasta que esté listo.
+    # Si backend-a aún no ha arrancado, /backend-a-status devuelve 502 hasta que esté listo;
+    # `docker compose up -d --wait` espera a que los dos estén healthy.
 
   backend-a:
     <<: *common
@@ -50,5 +52,7 @@ services:
         limits:
           memory: 256M
           cpus: "0.5"
+    # Arranca cuando backend-b está healthy (no solo iniciado). Sentido único: sin ciclos.
     depends_on:
-      - backend-b
+      backend-b:
+        condition: service_healthy

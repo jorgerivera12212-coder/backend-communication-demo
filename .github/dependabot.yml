@@ -1,0 +1,26 @@
+# Actualizaciones semanales de dependencias por PR (cada PR pasa por CI antes de fusionarse).
+# Las versiones están fijadas para que los builds sean reproducibles; Dependabot evita que se
+# queden congeladas.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: pip
+    directory: /backend-a
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: maven
+    directory: /backend-b
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directories:
+      - /backend-a
+      - /backend-b
+    schedule:
+      interval: weekly

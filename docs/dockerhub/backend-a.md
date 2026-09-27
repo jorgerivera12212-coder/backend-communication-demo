@@ -192,7 +192,22 @@ curl http://localhost:8080/backend-a-status # backend-b → backend-a
 
 `depends_on` solo ordena el arranque, no espera a que backend-b esté listo (Spring Boot tarda
 unos segundos). Si `/profile` devuelve `502` justo después de arrancar, espera un momento y
-vuelve a intentarlo.
+vuelve a intentarlo. Con imágenes que incluyen healthcheck (ver abajo) puedes usar
+`depends_on: backend-b: condition: service_healthy` y `docker compose up -d --wait`.
+
+## Healthcheck y usuario
+
+A partir de la primera versión publicada después de `v2.0.0`:
+
+- La imagen incluye `HEALTHCHECK`: consulta su propio `GET /health` cada 10 s (con `urllib`
+  de Python; la imagen no trae curl). No llama a backend-b, así que el estado `healthy` no
+  depende del otro servicio. Ver el estado: `docker ps` o
+  `docker inspect --format '{{json .State.Health}}' backend-a`.
+- El proceso corre como el usuario sin privilegios `app` (uid 10001), no como root.
+- Si backend-b responde con un cuerpo inválido (vacío, HTML, JSON mal formado o que no es un
+  objeto), `/profile` devuelve `502` en lugar de `500`.
+
+`v1.0.0` y `v2.0.0` no tienen healthcheck y corren como root.
 
 ## Código fuente
 

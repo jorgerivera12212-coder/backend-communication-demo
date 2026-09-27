@@ -44,12 +44,17 @@ async def profile():
 
         logger.debug("backend-b response: %s", response.text)
 
+        # ValueError cubre también json.JSONDecodeError (cuerpo vacío, HTML, JSON roto)
+        user = response.json()
+        if not isinstance(user, dict):
+            raise ValueError(f"expected a JSON object, got {type(user).__name__}")
+
         return {
             "message": "Profile retrieved from backend-b",
-            "user": response.json(),
+            "user": user,
         }
 
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         logger.error("Error communicating with backend-b: %r", exc)
         raise HTTPException(
             status_code=502,

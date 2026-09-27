@@ -26,7 +26,11 @@ import com.sun.net.httpserver.HttpServer;
 @WebMvcTest(BackendAController.class)
 class BackendAControllerTest {
 
-    private static volatile int fakeStatus = 200;
+    private static final String HEALTH_JSON = "{\"status\":\"ok\",\"service\":\"backend-a\"}";
+
+    private static volatile int fakeStatus;
+    private static volatile String fakeContentType;
+    private static volatile String fakeBody;
 
     private static final HttpServer fakeBackendA = startFakeBackendA();
 
@@ -34,10 +38,10 @@ class BackendAControllerTest {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             server.createContext("/health", exchange -> {
-                byte[] body = "{\"status\":\"ok\",\"service\":\"backend-a\"}"
-                    .getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().add("Content-Type", "application/json");
-                exchange.sendResponseHeaders(fakeStatus, body.length);
+                byte[] body = fakeBody.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", fakeContentType);
+                // -1 = respuesta sin cuerpo (Content-Length: 0)
+                exchange.sendResponseHeaders(fakeStatus, body.length == 0 ? -1 : body.length);
                 exchange.getResponseBody().write(body);
                 exchange.close();
             });
@@ -63,8 +67,10 @@ class BackendAControllerTest {
     private MockMvc mockMvc;
 
     @BeforeEach
-    void resetFakeStatus() {
+    void resetFakeBackendA() {
         fakeStatus = 200;
+        fakeContentType = "application/json";
+        fakeBody = HEALTH_JSON;
     }
 
     @Test
@@ -79,6 +85,31 @@ class BackendAControllerTest {
     @Test
     void returns502WhenBackendAFails() throws Exception {
         fakeStatus = 500;
+
+        mockMvc.perform(get("/backend-a-status"))
+            .andExpect(status().isBadGateway());
+    }
+
+    @Test
+    void returns502WhenBackendAReturnsInvalidJson() throws Exception {
+        fakeBody = "{not json";
+
+        mockMvc.perform(get("/backend-a-status"))
+            .andExpect(status().isBadGateway());
+    }
+
+    @Test
+    void returns502WhenBackendAReturnsNonJsonContent() throws Exception {
+        fakeContentType = "text/html";
+        fakeBody = "<html>proxy error</html>";
+
+        mockMvc.perform(get("/backend-a-status"))
+            .andExpect(status().isBadGateway());
+    }
+
+    @Test
+    void returns502WhenBackendAReturnsEmptyBody() throws Exception {
+        fakeBody = "";
 
         mockMvc.perform(get("/backend-a-status"))
             .andExpect(status().isBadGateway());

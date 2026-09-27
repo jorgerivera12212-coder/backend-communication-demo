@@ -4,11 +4,11 @@
 #
 # Variables de Compose obligatorias (en el .env de este directorio o en la shell):
 #   DEPLOY_ENV       staging | prod
-#   BACKEND_A_IMAGE  nombre completo con tag, p. ej. registry.example.com/demo/backend-a:1.0.0
-#   BACKEND_B_IMAGE  nombre completo con tag, p. ej. registry.example.com/demo/backend-b:1.0.0
+#   BACKEND_A_IMAGE  nombre completo con tag, p. ej. jorgeriveracoder/backend-a:v1.0.0
+#   BACKEND_B_IMAGE  nombre completo con tag, p. ej. jorgeriveracoder/backend-b:v1.0.0
 #
 #   docker compose -f compose.deploy.yml pull
-#   docker compose -f compose.deploy.yml up -d
+#   docker compose -f compose.deploy.yml up -d --wait
 
 # Configuración común a ambos servicios (se aplica con <<: *common)
 x-common: &common
@@ -37,6 +37,7 @@ services:
         limits:
           memory: 512M
           cpus: "0.5"
+    # Healthcheck incluido en la imagen (solo su propio /health).
     # Sin depends_on hacia backend-a: Compose no admite dependencias circulares.
 
   backend-a:
@@ -52,5 +53,7 @@ services:
         limits:
           memory: 256M
           cpus: "0.5"
+    # Arranca cuando backend-b está healthy (no solo iniciado). Sentido único: sin ciclos.
     depends_on:
-      - backend-b
+      backend-b:
+        condition: service_healthy

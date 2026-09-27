@@ -1,24 +1,80 @@
-# Release: al hacer push de un tag v* construye y publica ambas imágenes en Docker Hub
-# con el tag de Git (p. ej. v1.0.0) y con latest.
+# Release: al hacer push de un tag v* valida el tag, ejecuta todo CI (tests + integración) y,
+# solo si todo pasa, construye y publica ambas imágenes en Docker Hub con el tag de Git
+# (p. ej. v1.0.0) y con latest. No despliega en ningún servidor.
 name: Release
 
 on:
   push:
+    # El filtro solo decide qué tags disparan el workflow; no valida nada. Se deja amplio a
+    # propósito para que un tag mal formado (v1.0, v1.0.0-rc1...) falle de forma visible en
+    # validate-tag en vez de ignorarse en silencio.
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
+  validate-tag:
+    name: Validar tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: SemVer estricto (vMAYOR.MENOR.PARCHE)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "$TAG" =~ $semver ]]; then
+            echo "::error::El tag '$TAG' no es vMAYOR.MENOR.PARCHE (p. ej. v1.2.3, sin ceros a la izquierda ni sufijos)"
+            exit 1
+          fi
+
+      # Un tag puede apuntar a cualquier commit (de otra rama o sin rama); solo se publica
+      # lo que ya está en main.
+      - name: El commit del tag está en main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::El tag '$TAG' apunta a $(git rev-parse --short HEAD), que no está en la historia de main"
+            exit 1
+          fi
+
+  ci:
+    name: CI
+    needs: validate-tag
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: Publicar imágenes en Docker Hub
     runs-on: ubuntu-latest
+    needs:
+      - validate-tag
+      - ci
+    env:
+      # Variable de repositorio (no secret): el nombre de usuario no es sensible y, como
+      # secret, GitHub lo enmascara (***) en los logs y en los nombres de imagen.
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
     steps:
+      - name: Comprobar configuración
+        run: |
+          if [[ -z "$DOCKERHUB_USERNAME" ]]; then
+            echo "::error::Falta la variable de repositorio DOCKERHUB_USERNAME (Settings → Secrets and variables → Actions → Variables)"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Construir y publicar backend-a
@@ -27,8 +83,8 @@ jobs:
           context: ./backend-a
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-a:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-a:latest
+            ${{ env.DOCKERHUB_USERNAME }}/backend-a:${{ github.ref_name }}
+            ${{ env.DOCKERHUB_USERNAME }}/backend-a:latest
 
       - name: Construir y publicar backend-b
         uses: docker/build-push-action@v7
@@ -36,5 +92,5 @@ jobs:
           context: ./backend-b
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-b:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-b:latest
+            ${{ env.DOCKERHUB_USERNAME }}/backend-b:${{ github.ref_name }}
+            ${{ env.DOCKERHUB_USERNAME }}/backend-b:latest
