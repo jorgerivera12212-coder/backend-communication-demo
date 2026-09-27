@@ -1,0 +1,56 @@
+# Despliegue en staging y prod con imágenes ya publicadas en un registro.
+# No construye código: solo descarga (pull) y ejecuta las imágenes indicadas.
+# La misma imagen sirve para staging y prod; solo cambia env/<DEPLOY_ENV>/*.env.
+#
+# Variables de Compose obligatorias (en el .env de este directorio o en la shell):
+#   DEPLOY_ENV       staging | prod
+#   BACKEND_A_IMAGE  nombre completo con tag, p. ej. registry.example.com/demo/backend-a:1.0.0
+#   BACKEND_B_IMAGE  nombre completo con tag, p. ej. registry.example.com/demo/backend-b:1.0.0
+#
+#   docker compose -f compose.deploy.yml pull
+#   docker compose -f compose.deploy.yml up -d
+
+# Configuración común a ambos servicios (se aplica con <<: *common)
+x-common: &common
+  # Reinicia el contenedor si el proceso termina o si se reinicia Docker.
+  # No lo reinicia si se paró a mano (docker compose stop / down).
+  restart: unless-stopped
+  # Rotación de logs: como máximo 3 archivos de 10 MB por contenedor (30 MB en total)
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  backend-b:
+    <<: *common
+    image: ${BACKEND_B_IMAGE:?Define BACKEND_B_IMAGE con nombre completo y tag}
+    ports:
+      - "${BACKEND_B_HOST_PORT:-8080}:8080"
+    # Todas las variables de la aplicación (incluido APP_ENV) vienen de este archivo
+    env_file:
+      - ./env/${DEPLOY_ENV:?Define DEPLOY_ENV (staging o prod)}/backend-b.env
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    # Sin depends_on hacia backend-a: Compose no admite dependencias circulares.
+
+  backend-a:
+    <<: *common
+    image: ${BACKEND_A_IMAGE:?Define BACKEND_A_IMAGE con nombre completo y tag}
+    ports:
+      - "${BACKEND_A_HOST_PORT:-8000}:8000"
+    # Incluye BACKEND_B_URL=http://backend-b:8080 (nombre de servicio en la red de Compose)
+    env_file:
+      - ./env/${DEPLOY_ENV:?Define DEPLOY_ENV (staging o prod)}/backend-a.env
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    depends_on:
+      - backend-b

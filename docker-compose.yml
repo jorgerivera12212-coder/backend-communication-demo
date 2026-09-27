@@ -1,0 +1,54 @@
+# Desarrollo: construye las imágenes localmente desde el código.
+# Para staging y prod (imágenes ya publicadas) usar compose.deploy.yml.
+#
+# Ambiente: DEPLOY_ENV=dev|staging|prod (por defecto dev) elige env/<DEPLOY_ENV>/*.env
+#   docker compose up -d --build
+#   DEPLOY_ENV=staging docker compose up -d --build
+
+# Configuración común a ambos servicios (se aplica con <<: *common)
+x-common: &common
+  # Reinicia el contenedor si el proceso termina o si se reinicia Docker.
+  # No lo reinicia si se paró a mano (docker compose stop / down).
+  restart: unless-stopped
+  # Rotación de logs: como máximo 3 archivos de 10 MB por contenedor (30 MB en total)
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  backend-b:
+    <<: *common
+    build:
+      context: ./backend-b
+    ports:
+      - "${BACKEND_B_HOST_PORT:-8080}:8080"
+    # Todas las variables de la aplicación (incluido APP_ENV) vienen de este archivo
+    env_file:
+      - ./env/${DEPLOY_ENV:-dev}/backend-b.env
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    # Sin depends_on hacia backend-a: Compose no admite dependencias circulares.
+    # Si backend-a aún no ha arrancado, /backend-a-status devuelve 502 hasta que esté listo.
+
+  backend-a:
+    <<: *common
+    build:
+      context: ./backend-a
+    ports:
+      - "${BACKEND_A_HOST_PORT:-8000}:8000"
+    # Incluye BACKEND_B_URL=http://backend-b:8080 (nombre de servicio en la red de Compose)
+    env_file:
+      - ./env/${DEPLOY_ENV:-dev}/backend-a.env
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    depends_on:
+      - backend-b

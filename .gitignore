@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Configuración real: nunca se versiona, solo sus *.example
+# .env        -> variables de Compose en la raíz (DEPLOY_ENV, imágenes, puertos)
+# .env.local  -> ejecución de cada backend desde el IDE
+# env/*/*.env -> configuración de cada contenedor por ambiente
+.env
+.env.local
+env/*/*.env
+
+# Java / Maven
+target/
+
+# IDE
+.idea/
+.vscode/
+*.iml

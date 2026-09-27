@@ -1,0 +1,6 @@
+target/
+# Ninguna configuración entra en la imagen: llega en tiempo de ejecución
+.env
+.env.*
+*.env
+*.env.example
