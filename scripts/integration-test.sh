@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Prueba de integración: levanta los dos backends con docker-compose.yml (build desde el
-# código) y comprueba la comunicación real en ambos sentidos. La usan CI y desarrollo local.
+# Prueba de integración: levanta los dos backends y comprueba la comunicación real en ambos
+# sentidos. La usan CI y desarrollo local, en dos modos:
 #
 #   scripts/integration-test.sh
+#       Desarrollo: construye desde el código con docker-compose.yml.
+#
+#   BACKEND_A_IMAGE=backend-a:candidate BACKEND_B_IMAGE=backend-b:candidate scripts/integration-test.sh
+#       Imágenes ya construidas (lo que hace CI): usa compose.deploy.yml sin build ni pull, así
+#       que prueba exactamente esas imágenes, que deben existir en el Docker local.
 #
 # Usa su propio proyecto de Compose y otros puertos del host, así que no toca un stack de
 # desarrollo que ya esté levantado. Al terminar (bien o mal) borra sus contenedores y su red.
@@ -16,6 +21,23 @@ export DEPLOY_ENV="${DEPLOY_ENV:-dev}"
 export BACKEND_A_HOST_PORT="${BACKEND_A_HOST_PORT:-18000}"
 export BACKEND_B_HOST_PORT="${BACKEND_B_HOST_PORT:-18080}"
 
+# Solo se miran las variables de la shell (no el .env de la raíz): en desarrollo, por defecto,
+# siempre se prueba el código local. COMPOSE_FILE hace que todos los `docker compose` de
+# abajo (up, ps, logs, exec, down) usen el mismo archivo.
+if [[ -n "${BACKEND_A_IMAGE:-}" || -n "${BACKEND_B_IMAGE:-}" ]]; then
+  : "${BACKEND_A_IMAGE:?Define también BACKEND_A_IMAGE}"
+  : "${BACKEND_B_IMAGE:?Define también BACKEND_B_IMAGE}"
+  export BACKEND_A_IMAGE BACKEND_B_IMAGE
+  export COMPOSE_FILE=compose.deploy.yml
+  # never: si la imagen no está en el Docker local, falla en vez de descargar otra
+  up_args=(--pull never)
+  echo "Probando imágenes ya construidas: $BACKEND_A_IMAGE, $BACKEND_B_IMAGE"
+else
+  export COMPOSE_FILE=docker-compose.yml
+  up_args=(--build)
+  echo "Probando el código local (build con docker-compose.yml)"
+fi
+
 A="http://localhost:${BACKEND_A_HOST_PORT}"
 B="http://localhost:${BACKEND_B_HOST_PORT}"
 
@@ -23,7 +45,7 @@ for tool in docker curl jq; do
   command -v "$tool" >/dev/null || { echo "Falta '$tool'" >&2; exit 1; }
 done
 
-# docker-compose.yml exige env/<DEPLOY_ENV>/*.env; si no existen se crean desde los *.example
+# Los dos compose exigen env/<DEPLOY_ENV>/*.env; si no existen se crean desde los *.example
 for service in backend-a backend-b; do
   file="env/${DEPLOY_ENV}/${service}.env"
   if [[ ! -f "$file" ]]; then
@@ -45,7 +67,7 @@ cleanup() {
 trap cleanup EXIT
 
 # --wait: espera a que los healthchecks de ambos servicios pasen (falla si no en 120 s)
-docker compose up -d --build --wait --wait-timeout 120
+docker compose up -d "${up_args[@]}" --wait --wait-timeout 120
 
 failures=0
 

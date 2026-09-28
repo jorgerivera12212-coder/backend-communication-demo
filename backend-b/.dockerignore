@@ -1,6 +1,5 @@
 target/
-# Ninguna configuración entra en la imagen: llega en tiempo de ejecución
-.env
-.env.*
+# Ninguna configuración entra en la imagen: llega en tiempo de ejecución desde
+# env/<DEPLOY_ENV>/backend-b.env. Protección por si se crea algún .env en este directorio.
+.env*
 *.env
-*.env.example

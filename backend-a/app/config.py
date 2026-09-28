@@ -4,12 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Configuración leída de variables de entorno.
 
-    Desde el IDE se cargan de backend-a/.env.local; en Docker llegan desde
-    env/<DEPLOY_ENV>/backend-a.env (env_file de Compose).
-    Las variables de entorno reales tienen prioridad sobre el archivo .env.local.
+    En Docker llegan desde env/<DEPLOY_ENV>/backend-a.env (env_file de Compose).
+    Desde el IDE no hace falta ningún archivo: se usan los valores por defecto (dev, localhost).
     """
 
-    model_config = SettingsConfigDict(env_file=".env.local", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 
     app_name: str = "backend-a"
     app_env: str = "dev"

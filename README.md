@@ -26,12 +26,14 @@ Son dos ideas independientes:
 
 | Forma de ejecución | Archivo de configuración | Ambientes posibles |
 |---|---|---|
-| IDE / terminal, sin Docker | `backend-a/.env.local`, `backend-b/.env.local` | `dev` |
+| IDE / terminal, sin Docker | Ninguno: valores por defecto del código | `dev` |
 | Docker, construyendo desde el código (`docker-compose.yml`) | `env/<DEPLOY_ENV>/backend-*.env` | `dev` (por defecto), también `staging` o `prod` para probar su configuración |
 | Docker, con imágenes publicadas (`compose.deploy.yml`) | `env/<DEPLOY_ENV>/backend-*.env` | `staging`, `prod` |
 
-Todos los archivos usan **los mismos nombres de variables**; solo cambian los valores.
-Ninguno está en las imágenes: la configuración se inyecta al arrancar el contenedor, así que
+La configuración se escribe en **un solo lugar por ambiente**: `env/<ambiente>/`. Los valores
+por defecto del código ya son los de `dev` fuera de Docker (URLs a `localhost`), así que desde
+el IDE no hace falta ningún archivo.
+Ninguna configuración está en las imágenes: la configuración se inyecta al arrancar el contenedor, así que
 la misma imagen sirve para staging y prod.
 
 ### Variables de cada backend
@@ -45,12 +47,12 @@ Las dos aplicaciones leen las mismas variables comunes:
 | `LOG_LEVEL`   | Nivel de log (`DEBUG`, `INFO`, `WARN`, `ERROR`). `INFO` en todos los ambientes para empezar |
 | `SERVER_PORT` | Puerto en el que escucha el proceso (dentro del contenedor, en Docker)        |
 
-| backend-a           | IDE (`.env.local`)      | Docker (`env/*/backend-a.env`) |
+| backend-a           | IDE (valor por defecto) | Docker (`env/*/backend-a.env`) |
 |---------------------|-------------------------|--------------------------------|
 | `BACKEND_B_URL`     | `http://localhost:8080` | `http://backend-b:8080`        |
 | `BACKEND_B_TIMEOUT` | `5.0`                   | `5.0`                          |
 
-| backend-b           | IDE (`.env.local`)      | Docker (`env/*/backend-b.env`) |
+| backend-b           | IDE (valor por defecto) | Docker (`env/*/backend-b.env`) |
 |---------------------|-------------------------|--------------------------------|
 | `SERVER_ADDRESS`    | `0.0.0.0`               | `0.0.0.0`                      |
 | `BACKEND_A_URL`     | `http://localhost:8000` | `http://backend-a:8000`        |
@@ -58,9 +60,9 @@ Las dos aplicaciones leen las mismas variables comunes:
 
 - backend-a las lee con `pydantic-settings` ([app/config.py](backend-a/app/config.py)).
 - backend-b las lee en [application.properties](backend-b/src/main/resources/application.properties)
-  con placeholders `${VARIABLE:valor_por_defecto}`; el `.env.local` se importa con
-  `spring.config.import=optional:file:.env.local[.properties]`.
-- Una variable de entorno real siempre tiene prioridad sobre `.env.local`.
+  con placeholders `${VARIABLE:valor_por_defecto}`.
+- Para cambiar algo puntual desde el IDE (p. ej. `LOG_LEVEL=DEBUG`), defínelo como variable de
+  entorno en la configuración de ejecución del IDE o en la terminal.
 - `SERVER_PORT` en Docker debe coincidir con el puerto interno de `ports:` (8000 / 8080).
   Para cambiar el puerto **del host** usa `BACKEND_A_HOST_PORT` / `BACKEND_B_HOST_PORT`.
 - No hay perfiles de Spring: todo lo que varía por ambiente son valores de variables.
@@ -87,19 +89,27 @@ docker compose config            # muestra el YAML ya resuelto, con las variable
 
 ## Qué archivos crear
 
+Hay solo dos tipos de archivo de configuración, y los dos están fuera de `backend-a/` y
+`backend-b/`:
+
+| Archivo | Para qué |
+|---|---|
+| `.env` (raíz) | Variables de Compose: ambiente, imágenes, puertos del host |
+| `env/<ambiente>/backend-*.env` | Configuración de cada backend en ese ambiente |
+
 Solo se versionan los `*.example`. Los archivos reales tienen el mismo nombre sin `.example`,
-están en `.gitignore` y en los `.dockerignore`, y **nunca** deben contener secretos que se
-suban al repositorio. Hoy ninguna variable es secreta; si en el futuro alguna lo es, va solo
-en el archivo real del servidor.
+están en `.gitignore` y **nunca** deben contener secretos que se suban al repositorio. Hoy
+ninguna variable es secreta; si en el futuro alguna lo es, va solo en el archivo real del
+servidor.
+
+Ninguno entra en las imágenes: el contexto de build es `backend-a/` o `backend-b/`, donde no
+hay archivos `.env`, y además sus `.dockerignore` excluyen `.env*` y `*.env` por si alguien
+crea uno ahí.
 
 **Computadora de desarrollo**
 
 ```bash
-# Ejecución desde el IDE
-cp backend-a/.env.local.example backend-a/.env.local
-cp backend-b/.env.local.example backend-b/.env.local
-
-# Docker en dev
+# Docker en dev (desde el IDE no hace falta crear nada)
 cp env/dev/backend-a.env.example env/dev/backend-a.env
 cp env/dev/backend-b.env.example env/dev/backend-b.env
 ```
@@ -326,13 +336,13 @@ Swagger de FastAPI: http://localhost:8000/docs
 
 ## Ejecución desde el IDE (sin Docker)
 
-Requisitos: Python 3.12, Java 21 y Maven. Cada backend lee su `.env.local` (ambiente `dev`).
+Requisitos: Python 3.12, Java 21 y Maven. No hace falta ningún archivo de configuración: se
+usan los valores por defecto del código (ambiente `dev`, el otro backend en `localhost`).
 
 ### Backend B
 
 ```bash
 cd backend-b
-cp .env.local.example .env.local
 mvn spring-boot:run
 ```
 
@@ -340,7 +350,6 @@ mvn spring-boot:run
 
 ```bash
 cd backend-a
-cp .env.local.example .env.local
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt   # runtime + pytest
@@ -401,18 +410,27 @@ docker run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-21 mvn -B test
 
 ### Integración: ambos backends con Docker
 
-[scripts/integration-test.sh](scripts/integration-test.sh) construye las imágenes con
-`docker-compose.yml`, espera a los healthchecks (`up --wait`) y comprueba con los
-contenedores reales:
+[scripts/integration-test.sh](scripts/integration-test.sh) levanta los dos backends, espera a
+los healthchecks (`up --wait`) y comprueba con los contenedores reales:
 
 - `/health` de ambos servicios,
 - **A → B:** `GET /profile` de A devuelve el usuario de B,
 - **B → A:** `GET /backend-a-status` de B devuelve el `/health` de A,
 - que ningún proceso corre como root.
 
+Tiene dos modos (requiere docker con Compose v2, curl y jq):
+
 ```bash
-scripts/integration-test.sh     # requiere docker (Compose v2), curl y jq
+# Código local: construye con docker-compose.yml
+scripts/integration-test.sh
+
+# Imágenes ya construidas (lo que hace CI): compose.deploy.yml, sin build ni pull
+BACKEND_A_IMAGE=backend-a:candidate BACKEND_B_IMAGE=backend-b:candidate scripts/integration-test.sh
 ```
+
+En el segundo modo usa `--pull never`: si la imagen no está en el Docker local falla, en vez de
+descargar otra con el mismo nombre. Así se prueba exactamente la imagen indicada y, de paso, el
+mismo `compose.deploy.yml` que se usa en staging y prod.
 
 Usa su propio proyecto de Compose (`demo-integration`) y los puertos 18000 / 18080, así que
 no interfiere con un stack de desarrollo levantado; al terminar borra sus contenedores. Si no
@@ -425,10 +443,11 @@ Dos workflows de GitHub Actions en `.github/workflows/`, ambos con permisos mín
 (`contents: read`):
 
 - **`ci.yml`**: se ejecuta en cada push a `main`, en cada pull request hacia `main` y, como
-  workflow reutilizable, desde `release.yml`. Corre los tests de Backend A (`pytest`) y de
-  Backend B (`mvn --batch-mode verify`) en paralelo; si ambos pasan, ejecuta la
-  [prueba de integración](#integración-ambos-backends-con-docker), que construye las dos
-  imágenes y prueba la comunicación real. No publica nada.
+  workflow reutilizable, desde `release.yml`. En paralelo corre los tests de Backend A
+  (`pytest`), los de Backend B (`mvn --batch-mode verify`) y el **build de las dos imágenes**,
+  que se guardan como artefacto del run (`images`, se borra al día siguiente). Si los tres
+  pasan, la [prueba de integración](#integración-ambos-backends-con-docker) carga ese
+  artefacto y prueba la comunicación real con esas imágenes. No publica nada.
 - **`release.yml`**: se ejecuta al hacer push de un tag de Git que empiece por `v`. Tiene tres
   etapas y cada una solo empieza si la anterior pasó:
   1. **Validar tag.** El filtro `v*` del disparador no valida nada (también dispararía con
@@ -436,11 +455,37 @@ Dos workflows de GitHub Actions en `.github/workflows/`, ambos con permisos mín
      - SemVer estricto `vMAYOR.MENOR.PARCHE` (`v1.2.3`; sin ceros a la izquierda ni sufijos
        como `-rc1`);
      - el commit del tag está en la historia de `main` (no se publica código de otra rama).
-  2. **CI completo** (el mismo `ci.yml`: tests + integración) sobre el commit del tag.
-  3. **Publicar** ambas imágenes en Docker Hub.
+  2. **CI completo** (el mismo `ci.yml`: tests, build e integración) sobre el commit del tag.
+  3. **Publicar** en Docker Hub las imágenes del artefacto de CI: se cargan, se etiquetan y se
+     suben, **sin volver a construir**. Primero la versión de las dos y después `latest`.
 
   Un tag que no pase la validación hace fallar el workflow de forma visible y no publica
   nada. Si hay que corregirlo: `git push --delete origin <tag>` y crear el tag correcto.
+
+**Build once: se publica exactamente lo que se probó.** Las imágenes se construyen una sola
+vez por run. Si publish volviera a construir, una imagen base o un paquete podría cambiar entre
+la prueba y la publicación, y se publicaría algo que nadie probó. Para comprobarlo, el resumen
+del run muestra el ID de cada imagen en *Construir imágenes* y en *Publicar*: tiene que ser el
+mismo.
+
+```text
+tests A ─┐
+tests B ─┼─▶ integración (artefacto) ─▶ publicar (el mismo artefacto)
+build  ──┘   (solo en release.yml)
+```
+
+**Concurrencia y tiempos máximos:**
+
+| | CI | Release |
+|---|---|---|
+| Ejecuciones a la vez | Una por rama / PR / tag | Una en todo el repositorio |
+| ¿Se cancela la anterior? | Solo en PRs (en `main` cada commit conserva su resultado) | Nunca: el nuevo espera a que termine el que está en curso |
+| `timeout-minutes` | 10 (Python), 15 (Java), 20 (build), 10 (integración) | 5 (validar tag), 30 (publicar) |
+
+Release no se cancela porque cortar una publicación a medias podría dejar backend-a publicado y
+backend-b no, y es global porque todos los releases escriben `latest`. GitHub solo deja **un**
+release en espera: si llega un tercero, el que esperaba se cancela y hay que relanzarlo
+(*Re-run jobs*).
 
 **No hay despliegue automático (CD).** El release solo publica imágenes; el despliegue en los
 servidores sigue siendo manual con `compose.deploy.yml`.
@@ -479,16 +524,16 @@ Para desplegar esa versión con `compose.deploy.yml`, usa el tag fijo (no `lates
 ```text
 .
 ├── .github/
-│   ├── workflows/          # ci.yml (tests + integración) y release.yml (validación + CI + Docker Hub)
+│   ├── workflows/          # ci.yml (tests + build + integración) y release.yml (validación + CI + publicar el artefacto)
 │   └── dependabot.yml      # PRs semanales de actualización de dependencias
 ├── backend-a/              # Python + FastAPI
 │   ├── app/main.py
 │   ├── app/__main__.py     # python -m app: arranca Uvicorn en SERVER_PORT
-│   ├── app/config.py       # Settings desde variables de entorno / .env.local
+│   ├── app/config.py       # Settings desde variables de entorno (defaults = dev local)
 │   ├── tests/test_main.py
-│   ├── .env.local.example  # ejecución desde el IDE
 │   ├── requirements.txt    # runtime, versiones fijas (va en la imagen)
 │   ├── requirements-dev.txt # runtime + pytest
+│   ├── .dockerignore       # fuera de la imagen: tests, venv, cachés y cualquier .env
 │   └── Dockerfile          # usuario sin root + HEALTHCHECK
 ├── backend-b/              # Java 21 + Spring Boot
 │   ├── src/main/java/com/example/backendb/
@@ -498,8 +543,8 @@ Para desplegar esa versión con `compose.deploy.yml`, usa el tag fijo (no `lates
 │   │       └── BackendAController.java   # /backend-a-status (llama a backend-a)
 │   ├── src/main/resources/application.properties
 │   ├── src/test/java/com/example/backendb/controller/
-│   ├── .env.local.example  # ejecución desde el IDE
 │   ├── pom.xml
+│   ├── .dockerignore       # fuera de la imagen: target/ y cualquier .env
 │   └── Dockerfile          # multi-stage: Maven build → JRE runtime, sin root + HEALTHCHECK
 ├── scripts/integration-test.sh  # prueba de integración A ↔ B con Docker Compose
 ├── env/                    # configuración de los contenedores por ambiente

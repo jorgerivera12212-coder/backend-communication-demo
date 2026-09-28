@@ -1,6 +1,7 @@
-# Release: al hacer push de un tag v* valida el tag, ejecuta todo CI (tests + integración) y,
-# solo si todo pasa, construye y publica ambas imágenes en Docker Hub con el tag de Git
-# (p. ej. v1.0.0) y con latest. No despliega en ningún servidor.
+# Release: al hacer push de un tag v* valida el tag, ejecuta todo CI (tests, build e
+# integración) y, solo si todo pasa, publica en Docker Hub las imágenes que construyó y probó
+# CI, con el tag de Git (p. ej. v1.0.0) y con latest. No vuelve a construir: publica el
+# artefacto probado. No despliega en ningún servidor.
 name: Release
 
 on:
@@ -14,10 +15,26 @@ on:
 permissions:
   contents: read
 
+# Un solo release a la vez en todo el repositorio, y nunca se cancela uno en curso: cortar
+# una publicación a medias podría dejar backend-a publicado y backend-b no.
+# El grupo es global (no por tag) porque todos los releases escriben el mismo tag latest: dos
+# en paralelo podrían dejar latest apuntando a la versión más antigua.
+# Limitación de GitHub: solo queda un release en espera. Si llega un tercero mientras uno
+# corre y otro espera, el que esperaba se cancela y hay que relanzarlo (Re-run jobs).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Nombres locales de las imágenes dentro del artefacto "images": los mismos que en ci.yml
+env:
+  BACKEND_A_IMAGE: backend-a:candidate
+  BACKEND_B_IMAGE: backend-b:candidate
+
 jobs:
   validate-tag:
     name: Validar tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,6 +62,7 @@ jobs:
             exit 1
           fi
 
+  # Un job con uses: no admite timeout-minutes; cada job de ci.yml ya trae el suyo
   ci:
     name: CI
     needs: validate-tag
@@ -53,6 +71,8 @@ jobs:
   publish:
     name: Publicar imágenes en Docker Hub
     runs-on: ubuntu-latest
+    # Holgado a propósito: si se corta a mitad, puede quedar una imagen publicada y la otra no
+    timeout-minutes: 30
     needs:
       - validate-tag
       - ci
@@ -74,29 +94,47 @@ jobs:
           done
           exit "$missing"
 
-      - uses: actions/checkout@v7
+      # El artefacto que subió el job build de ci.yml en este mismo run: las imágenes que
+      # pasaron la integración. Aquí no hay checkout ni build.
+      - uses: actions/download-artifact@v8
+        with:
+          name: images
+          path: ${{ runner.temp }}
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Cargar las imágenes probadas
+        run: docker load --input "$RUNNER_TEMP/images.tar.gz"
 
       - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Construir y publicar backend-a
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend-a
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-a:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-a:latest
+      # Primero la versión de las dos imágenes y después latest: si algo falla a mitad,
+      # latest sigue apuntando a la versión anterior completa.
+      - name: Etiquetar y publicar
+        env:
+          REPO: ${{ secrets.DOCKERHUB_USERNAME }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          declare -A local_image=(
+            [backend-a]="$BACKEND_A_IMAGE"
+            [backend-b]="$BACKEND_B_IMAGE"
+          )
+          for tag in "$VERSION" latest; do
+            for service in backend-a backend-b; do
+              docker tag "${local_image[$service]}" "$REPO/$service:$tag"
+              docker push "$REPO/$service:$tag"
+            done
+          done
 
-      - name: Construir y publicar backend-b
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend-b
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-b:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/backend-b:latest
+          {
+            echo "### Imágenes publicadas"
+            echo '| Imagen | ID (igual que en "Construir imágenes") | Digest en Docker Hub |'
+            echo '|---|---|---|'
+            for service in backend-a backend-b; do
+              image="$REPO/$service:$VERSION"
+              id=$(docker image inspect --format '{{.Id}}' "$image")
+              digest=$(docker image inspect --format '{{join .RepoDigests ", "}}' "$image")
+              echo "| \`$image\` | \`$id\` | \`$digest\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

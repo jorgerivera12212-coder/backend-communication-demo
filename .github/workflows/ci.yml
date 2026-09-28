@@ -1,5 +1,10 @@
-# CI: tests de ambos backends y prueba de integración con Docker Compose. No publica imágenes.
+# CI: tests de ambos backends, build de las imágenes y prueba de integración con esas mismas
+# imágenes. No publica nada.
 # También lo llama release.yml (workflow_call) para que no se publique nada sin pasar por aquí.
+#
+# Build once: las imágenes se construyen una sola vez (job build) y se guardan como artefacto
+# del run. La integración prueba ese artefacto y release.yml publica ese mismo artefacto, sin
+# volver a construir: lo publicado es exactamente lo probado.
 name: CI
 
 on:
@@ -12,10 +17,29 @@ on:
 permissions:
   contents: read
 
+# Una sola ejecución de CI por rama / PR / tag.
+# - En un PR, un push nuevo cancela la ejecución anterior: ese commit ya no se va a fusionar.
+# - En main no se cancela: cada commit de main debe quedar con su resultado (verde o rojo).
+# - Llamado desde release.yml, github.ref es el tag (refs/tags/v1.2.3) y el evento es push,
+#   así que no cancela nada y el grupo (ci-...) no coincide con el de Release (sin bloqueos).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nombres locales de las imágenes dentro del artefacto. release.yml usa los mismos nombres:
+# si se cambian aquí, hay que cambiarlos también allí.
+env:
+  BACKEND_A_IMAGE: backend-a:candidate
+  BACKEND_B_IMAGE: backend-b:candidate
+
+# timeout-minutes: sin él, un job colgado ocupa el runner hasta 6 h. Los valores dejan
+# margen de sobra sobre la duración normal (python ~1 min, java ~2 min, build ~4 min,
+# integración ~2 min).
 jobs:
   python-tests:
     name: Backend A (Python)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend-a
@@ -39,6 +63,7 @@ jobs:
   java-tests:
     name: Backend B (Java)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend-b
@@ -55,16 +80,64 @@ jobs:
       - name: Ejecutar tests
         run: mvn --batch-mode verify
 
-  integration:
-    name: Integración (Docker Compose)
+  # En paralelo con los tests: no depende de ellos, y la integración espera a los tres
+  build:
+    name: Construir imágenes
     runs-on: ubuntu-latest
-    needs:
-      - python-tests
-      - java-tests
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
-      # Construye ambas imágenes desde los Dockerfile, espera a los healthchecks y prueba
-      # A -> B (/profile) y B -> A (/backend-a-status) con los contenedores reales.
+      # --pull: siempre la última build de la imagen base del tag (parches de seguridad)
+      - name: Construir backend-a y backend-b
+        run: |
+          docker build --pull --tag "$BACKEND_A_IMAGE" backend-a
+          docker build --pull --tag "$BACKEND_B_IMAGE" backend-b
+
+      - name: Guardar las imágenes en un archivo
+        run: |
+          docker save "$BACKEND_A_IMAGE" "$BACKEND_B_IMAGE" | gzip > "$RUNNER_TEMP/images.tar.gz"
+          {
+            echo "### Imágenes construidas"
+            echo '| Imagen | ID |'
+            echo '|---|---|'
+            for image in "$BACKEND_A_IMAGE" "$BACKEND_B_IMAGE"; do
+              echo "| \`$image\` | \`$(docker image inspect --format '{{.Id}}' "$image")\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Solo hace falta durante este run (integración y, en un release, publicación)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: images
+          path: ${{ runner.temp }}/images.tar.gz
+          retention-days: 1
+          compression-level: 0 # ya va en gzip
+          if-no-files-found: error
+
+  integration:
+    name: Integración (Docker Compose)
+    runs-on: ubuntu-latest
+    # Descarga y carga de las imágenes + hasta 120 s de espera a los healthchecks
+    timeout-minutes: 10
+    needs:
+      - python-tests
+      - java-tests
+      - build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: images
+          path: ${{ runner.temp }}
+
+      - name: Cargar las imágenes construidas
+        run: docker load --input "$RUNNER_TEMP/images.tar.gz"
+
+      # Con BACKEND_A_IMAGE / BACKEND_B_IMAGE definidas (env de arriba), el script usa
+      # compose.deploy.yml con esas imágenes, sin build ni pull: prueba el artefacto que se
+      # publicará y, de paso, el mismo compose que se usa en staging y prod.
+      # Comprueba A -> B (/profile) y B -> A (/backend-a-status) con los contenedores reales.
       - name: Levantar el stack y probar la comunicación
         run: scripts/integration-test.sh
