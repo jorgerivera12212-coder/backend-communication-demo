@@ -447,12 +447,14 @@ servidores sigue siendo manual con `compose.deploy.yml`.
 
 Configuración necesaria (GitHub → Settings → Secrets and variables → Actions):
 
-| Tipo | Nombre | Valor |
-|---|---|---|
-| Variable (pestaña *Variables*) | `DOCKERHUB_USERNAME` | Usuario de Docker Hub. Es variable, no secret: no es sensible, y como secret GitHub lo enmascara (`***`) en los logs y en los nombres de imagen |
-| Secret | `DOCKERHUB_TOKEN` | Access token de Docker Hub (Account settings → Personal access tokens), con permiso de escritura |
+| Secret | Valor |
+|---|---|
+| `DOCKERHUB_USERNAME` | Usuario de Docker Hub |
+| `DOCKERHUB_TOKEN` | Access token de Docker Hub (Account settings → Personal access tokens), con permiso de escritura |
 
-Si falta la variable, el job de publicación falla al principio con un mensaje que lo indica.
+Si falta alguno de los dos, el job de publicación falla al principio con un mensaje que lo indica.
+Como el usuario es un secret, GitHub lo muestra como `***` en los logs (también dentro de los
+nombres de imagen); es solo visual, la imagen se publica con el nombre real.
 
 Publicar una nueva versión (desde un commit que ya esté en `main`):
 
