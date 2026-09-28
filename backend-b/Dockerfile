@@ -1,5 +1,7 @@
 # Etapa 1: compilar el jar con Maven + Java 21
-FROM maven:3-eclipse-temurin-24 AS build
+# Misma versión de Java que el runtime (eclipse-temurin:21-jre), pom.xml y CI: 21 LTS.
+# Dependabot no propone saltos de Java (ver .github/dependabot.yml); se cambia a mano.
+FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /app
 
